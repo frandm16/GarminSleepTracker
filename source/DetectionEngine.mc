@@ -10,72 +10,60 @@ class DetectionEngine {
 
     //! Run one detection pass. Safe to call from the foreground.
     static function tick() as Void {
-        if (!SleepState.isActive()) {
+        if (!SleepState.isActive() || SleepState.getAlarmFired()) {
             return;
         }
-        var nowEpoch = Time.now().value();
-        var startEpoch = SleepState.getStartEpoch();
-        if (startEpoch <= 0) {
+        var currentTimestamp = Time.now().value();
+        var sessionStartTimestamp = SleepState.getStartEpoch();
+        if (sessionStartTimestamp <= 0) {
             return;
         }
 
-        var fromEpoch = startEpoch - 600; // include a little pre-start context
-        if (fromEpoch < 0) {
-            fromEpoch = 0;
+        var readStartTimestamp = sessionStartTimestamp - 600; // pre-start context
+        if (readStartTimestamp < 0) {
+            readStartTimestamp = 0;
         }
 
-        var hr = HistoryReader.readHeartRate(fromEpoch, nowEpoch);
-        var stress = HistoryReader.readStress(fromEpoch, nowEpoch);
-        var bb = HistoryReader.readBodyBattery(fromEpoch, nowEpoch);
+        var heartRateSamples = HistoryReader.readHeartRate(readStartTimestamp, currentTimestamp);
+        var stressSamples = HistoryReader.readStress(readStartTimestamp, currentTimestamp);
+        var bodyBatterySamples = HistoryReader.readBodyBattery(readStartTimestamp, currentTimestamp);
 
-        var det = new SleepDetector();
-        det.run(hr, stress, bb, fromEpoch, nowEpoch);
+        var sleepDetector = new SleepDetector();
+        sleepDetector.run(heartRateSamples, stressSamples, bodyBatterySamples, readStartTimestamp, currentTimestamp);
 
-        var sleepSeconds = det.getSleepSeconds();
-        var detState = det.getState();
-        var onsetEpoch = det.getOnsetEpoch();
+        var accumulatedSleepSeconds = sleepDetector.getSleepSeconds();
+        var currentDetectionState = sleepDetector.getState();
+        var detectedStartSleepTimestamp = sleepDetector.getOnsetEpoch();
 
-        // Write the persisted state only when it changes, to avoid flash
-        // writes on every tick (the value only moves at 5-min bucket edges).
-        if (SleepState.getSleepSeconds() != sleepSeconds) {
-            SleepState.setSleepSeconds(sleepSeconds);
+        if (SleepState.getSleepSeconds() != accumulatedSleepSeconds) {
+            SleepState.setSleepSeconds(accumulatedSleepSeconds);
         }
-        if (SleepState.getDetState() != detState) {
-            SleepState.setDetState(detState);
+        if (SleepState.getDetState() != currentDetectionState) {
+            SleepState.setDetState(currentDetectionState);
         }
-        var currentOnset = SleepState.getOnsetEpoch();
-        if (currentOnset == 0 && onsetEpoch > 0) {
-            SleepState.setOnsetEpoch(onsetEpoch);
+        var savedStartSleepTimestamp = SleepState.getOnsetEpoch();
+        if (savedStartSleepTimestamp == 0 && detectedStartSleepTimestamp > 0) {
+            SleepState.setOnsetEpoch(detectedStartSleepTimestamp);
         }
 
-        var targetSeconds = SleepState.getTargetMinutes() * 60;
-        var remaining = targetSeconds - sleepSeconds;
-        var alarmFired = SleepState.getAlarmFired();
+        var targetSleepSeconds = SleepState.getTargetMinutes() * 60;
+        var remainingSleepSeconds = targetSleepSeconds - accumulatedSleepSeconds;
+        var hasAlarmFired = SleepState.getAlarmFired();
 
-        // Write the diagnostics line at most every 5 minutes to save battery
-        // (the state itself is updated on every tick).
-        if (nowEpoch - SleepState.getLastLog() >= 300) {
-            var bat = System.getSystemStats().battery;
-            Logbook.appendEvent(nowEpoch, sleepSeconds, remaining, detState, onsetEpoch,
-                det.getRestingHr(), bat.toNumber(),
-                summarizeRange(hr.size(), rangeOf(hr)),
-                summarizeRange(stress.size(), rangeOf(stress)),
-                summarizeRange(bb.size(), rangeOf(bb)));
-            SleepState.setLastLog(nowEpoch);
+        if (currentTimestamp - SleepState.getLastLog() >= 300) {
+            var currentBattery = System.getSystemStats().battery;
+            Logbook.appendEvent(currentTimestamp, accumulatedSleepSeconds, remainingSleepSeconds, currentDetectionState, detectedStartSleepTimestamp,
+                sleepDetector.getRestingHr(), currentBattery.toNumber(),
+                summarizeRange(heartRateSamples.size(), rangeOf(heartRateSamples)),
+                summarizeRange(stressSamples.size(), rangeOf(stressSamples)),
+                summarizeRange(bodyBatterySamples.size(), rangeOf(bodyBatterySamples)));
+            SleepState.setLastLog(currentTimestamp);
         }
 
-        if (!alarmFired && remaining <= 0) {
-            // Goal reached: fire the alarm.
+        if (!hasAlarmFired && remainingSleepSeconds <= 0) {
             SleepState.setAlarmFired(true);
-            SleepState.setLastVib(nowEpoch);
+            SleepState.setLastVib(currentTimestamp);
             Alarm.vibrate();
-        } else if (alarmFired) {
-            // Alarm sounding: repeat every 5 minutes until the user stops.
-            var lastVib = SleepState.getLastVib();
-            if (lastVib <= 0 || nowEpoch - lastVib >= 300) { // every 6 min
-                SleepState.setLastVib(nowEpoch);
-                Alarm.vibrate();
-            }
         }
     }
 
@@ -84,17 +72,17 @@ class DetectionEngine {
         if (samples.size() == 0) {
             return null;
         }
-        var lo = (samples[0][:value] as Number).toNumber();
-        var hi = lo;
+        var min = (samples[0][:value] as Number).toNumber();
+        var max = min;
         for (var i = 1; i < samples.size(); i++) {
-            var v = (samples[i][:value] as Number).toNumber();
-            if (v < lo) { lo = v; }
-            if (v > hi) { hi = v; }
+            var value = (samples[i][:value] as Number).toNumber();
+            if (value < min) { min = value; }
+            if (value > max) { max = value; }
         }
-        return [ lo, hi ];
+        return [ min, max ];
     }
 
-    //! "count[lo-hi]" for the log, or "0" if no data.
+    //! "count[min-max]" for the log, or "0" if no data.
     private static function summarizeRange(count as Number, r as Array<Number> or Null) as String {
         if (r == null) {
             return "0";

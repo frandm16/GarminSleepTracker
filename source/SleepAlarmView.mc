@@ -8,7 +8,14 @@ import Toybox.WatchUi;
 //! renders current sleep statistics.
 class SleepAlarmView extends WatchUi.View {
 
+    private const INTERVAL_NORMAL_MS as Number = 300000;
+    private const INTERVAL_NEAR_MS as Number   = 30000;
+    private const INTERVAL_ALARM_MS as Number  = 2500;
+
+    private const ALARM_THRESHOLD_SEC as Number = INTERVAL_NORMAL_MS / 1000;
+
     private var _timer as Timer.Timer?;
+    private var _currentIntervalMs as Number = 0;
 
     function initialize() {
         View.initialize();
@@ -27,10 +34,8 @@ class SleepAlarmView extends WatchUi.View {
     }
 
     function startTimerIfNeeded() as Void {
-        if (SleepState.isActive() && _timer == null) {
-            _timer = new Timer.Timer();
-            _timer.start(method(:onTick), 120000, true);
-            DetectionEngine.tick();
+        if (SleepState.isActive()) {
+            scheduleNextTick();
         }
     }
 
@@ -41,10 +46,50 @@ class SleepAlarmView extends WatchUi.View {
             t.stop();
             _timer = null;
         }
+        _currentIntervalMs = 0;
     }
 
     function onTick() as Void {
         DetectionEngine.tick();
+
+        if (SleepState.getAlarmFired()) {
+            Alarm.vibrate();
+        }
+
+        WatchUi.requestUpdate();
+
+        if (SleepState.isActive()) {
+            scheduleNextTick();
+        } else {
+            stopTimer();
+        }
+    }
+
+    private function scheduleNextTick() as Void {
+        var desiredIntervalMs = INTERVAL_NORMAL_MS;
+
+        if (SleepState.getAlarmFired()) {
+            desiredIntervalMs = INTERVAL_ALARM_MS;
+        } else {
+            var targetSeconds = SleepState.getTargetMinutes() * 60;
+            var accumulatedSleepSeconds = SleepState.getSleepSeconds();
+            var remainingSleepSeconds = targetSeconds - accumulatedSleepSeconds;
+
+            if (remainingSleepSeconds <= ALARM_THRESHOLD_SEC) {
+                desiredIntervalMs = INTERVAL_NEAR_MS;
+            }
+        }
+
+        if (_timer == null || _currentIntervalMs != desiredIntervalMs) {
+            if (_timer == null) {
+                _timer = new Timer.Timer();
+            } else {
+                _timer.stop();
+            }
+            
+            _currentIntervalMs = desiredIntervalMs;
+            _timer.start(method(:onTick), _currentIntervalMs, false);
+        }
     }
 
     function refresh() as Void {
