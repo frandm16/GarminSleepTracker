@@ -34,4 +34,9 @@ module Util {
         var info = Gregorian.info(new Time.Moment(epoch), Time.FORMAT_SHORT);
         return pad2(info.hour) + ":" + pad2(info.min) + ":" + pad2(info.sec);
     }
+
+    function fmtDateTime(epoch as Number) as String {
+        var info = Gregorian.info(new Time.Moment(epoch), Time.FORMAT_SHORT);
+        return pad2(info.day) + "/" + pad2(info.month) + "/" + pad2(info.year) + " - " + pad2(info.hour) + ":" + pad2(info.min) + ":" + pad2(info.sec);
+    }
 }

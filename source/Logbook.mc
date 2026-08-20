@@ -1,6 +1,7 @@
 import Toybox.Application.Storage;
 import Toybox.Lang;
 import Toybox.Time;
+import Toybox.System;
 
 //! Bounded CSV diagnostics log stored in the Object Store as a small ring of
 //! chunk keys. Each background event appends one compact line so the whole
@@ -41,14 +42,28 @@ module Logbook {
         append(line1);
         append(line2);
         append(line3);
+
+        var currentTime = Util.fmtDateTime(Time.now().value());
+        System.println(currentTime + " == " + line1);
+        System.println(currentTime + " == " + line2);
+        System.println(currentTime + " == " + line3);
+        System.println("");
     }
 
     function appendSessionStart() as Void {
-        append("== START " + Util.fmtClockFull(Time.now().value()) + " ==");
+        var line = "== START " + Util.fmtClockFull(Time.now().value()) + " ==";
+        append(line);
+
+        var currentTime = Util.fmtDateTime(Time.now().value());
+        System.println(currentTime + " == " + line);
     }
 
     function appendSessionEnd() as Void {
-        append("== END " + Util.fmtClockFull(Time.now().value()) + " ==");
+        var line = "== END " + Util.fmtClockFull(Time.now().value()) + " ==";
+        append(line);
+
+        var currentTime = Util.fmtDateTime(Time.now().value());
+        System.println(currentTime + " == " + line);
     }
 
     //! Erase the whole log.
