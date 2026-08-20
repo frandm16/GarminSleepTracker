@@ -33,11 +33,17 @@ class SleepAlarmDelegate extends WatchUi.BehaviorDelegate {
     }
 
     function onMenu() as Boolean {
+        if (SleepState.isActive()) {
+            return true;
+        }
         openMenu();
         return true;
     }
 
     function onNextPage() as Boolean {
+        if (SleepState.isActive()) {
+            return true;
+        }
         openMenu();
         return true;
     }
@@ -60,6 +66,7 @@ class SleepAlarmDelegate extends WatchUi.BehaviorDelegate {
             SleepState.startSession(target);
             _view.startTimerIfNeeded();
             _view.refresh();
+            Notify.vibrate();
         }
     }
 }

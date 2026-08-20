@@ -10,7 +10,7 @@ class SleepAlarmView extends WatchUi.View {
 
     private const INTERVAL_NORMAL_MS as Number = 300000;
     private const INTERVAL_NEAR_MS as Number   = 30000;
-    private const INTERVAL_ALARM_MS as Number  = 2500;
+    private const INTERVAL_ALARM_MS as Number  = 500;
 
     private const ALARM_THRESHOLD_SEC as Number = INTERVAL_NORMAL_MS / 1000;
 
@@ -88,7 +88,7 @@ class SleepAlarmView extends WatchUi.View {
             }
             
             _currentIntervalMs = desiredIntervalMs;
-            _timer.start(method(:onTick), _currentIntervalMs, false);
+            _timer.start(method(:onTick), _currentIntervalMs, true);
         }
     }
 
@@ -205,7 +205,6 @@ class SleepAlarmView extends WatchUi.View {
             return;
         }
 
-        var height = dc.getHeight();
         var centerX = width / 2;
 
         var fState = Graphics.FONT_MEDIUM;
@@ -312,14 +311,6 @@ class SleepAlarmView extends WatchUi.View {
             Graphics.TEXT_JUSTIFY_CENTER
         );
 
-        dc.setColor(Graphics.COLOR_BLUE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(
-            centerX,
-            height - 35,
-            fSmall,
-            "↑  MENU",
-            Graphics.TEXT_JUSTIFY_CENTER
-        );
     }
 
     // -------------------------------------------------------------------------
