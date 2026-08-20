@@ -72,7 +72,7 @@ class DetectionEngine {
         } else if (alarmFired) {
             // Alarm sounding: repeat every 5 minutes until the user stops.
             var lastVib = SleepState.getLastVib();
-            if (lastVib <= 0 || nowEpoch - lastVib >= 5 * 60) {
+            if (lastVib <= 0 || nowEpoch - lastVib >= 300) { // every 6 min
                 SleepState.setLastVib(nowEpoch);
                 Alarm.vibrate();
             }

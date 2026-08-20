@@ -47,7 +47,6 @@ module Logbook {
         System.println(currentTime + " == " + line1);
         System.println(currentTime + " == " + line2);
         System.println(currentTime + " == " + line3);
-        System.println("");
     }
 
     function appendSessionStart() as Void {
