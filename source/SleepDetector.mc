@@ -5,25 +5,6 @@ import Toybox.Time.Gregorian;
 import Toybox.UserProfile;
 
 //! Heuristic sleep detector built on the device recorded histories.
-//!
-//! Every detection pass recomputes the whole night classification from the
-//! raw histories, so the result is deterministic and self-healing.
-//!
-//! Signals (all from SensorHistory):
-//!   - Heart rate level and stability (fall + low variance = resting)
-//!   - Stress level (HRV based; low = relaxed)
-//!   - Body battery slope (rising = Garmin's own sleep detector engaged)
-//!
-//! Classification is conservative but calibrated for recall: a bucket is
-//! asleep if any of:
-//!   1. Body battery rising over a ~20 min window PLUS one corroborating
-//!      signal (low HR or low stress) - works even at sleep onset when stress
-//!      is still high.
-//!   2. During the night window (20:00-13:00): low + stable HR alone. This is
-//!      the catch-all that catches sleep onset.
-//!   3. Only heart rate history available: low + stable.
-//! Buckets are built in a single pass over the samples (O(S)), keeping the
-//! whole pass fast enough to stay under the device watchdog.
 class SleepDetector {
 
     enum {
@@ -50,6 +31,7 @@ class SleepDetector {
     private var _bbRing as Array<Dictionary>;
     private var _stressSeen as Boolean;
     private var _bbSeen as Boolean;
+    private var _fixedOnsetEpoch as Number;
 
     function initialize() {
         _state = STATE_AWAKE;
@@ -62,13 +44,19 @@ class SleepDetector {
         _bbRing = new Array<Dictionary>[0];
         _stressSeen = false;
         _bbSeen = false;
+        _fixedOnsetEpoch = 0;
     }
 
-    //! Classify the whole window [startEpoch, endEpoch] from raw histories.
-    function run(hrSamples as Array<Dictionary>, stressSamples as Array<Dictionary>, bbSamples as Array<Dictionary>, startEpoch as Number, endEpoch as Number) as Void {
+    function run(hrSamples as Array<Dictionary>, stressSamples as Array<Dictionary>, bbSamples as Array<Dictionary>, startEpoch as Number, endEpoch as Number, fixedOnsetEpoch as Number) as Void {
         _restingHr = estimateRestingHr(hrSamples);
         _stressSeen = stressSamples.size() > 0;
         _bbSeen = bbSamples.size() > 0;
+        _fixedOnsetEpoch = fixedOnsetEpoch;
+
+        if (_fixedOnsetEpoch > 0) {
+            _onsetEpoch = _fixedOnsetEpoch;
+        }
+
         var buckets = buildBuckets(hrSamples, stressSamples, bbSamples, startEpoch, endEpoch);
         for (var i = 0; i < buckets.size(); i++) {
             processBucket(buckets[i]);
@@ -80,11 +68,6 @@ class SleepDetector {
     function getOnsetEpoch() as Number { return _onsetEpoch; }
     function getRestingHr() as Number { return _restingHr; }
 
-    //! Resting HR used as the sleep baseline. Prefers the user's configured
-    //! resting heart rate (stable across the night); otherwise falls back to
-    //! the minimum HR seen during the session (clamped). A stable baseline is
-    //! essential: a running minimum keeps dropping during the night and
-    //! re-classifies earlier buckets, making the accumulated sleep oscillate.
     private function estimateRestingHr(hrSamples as Array<Dictionary>) as Number {
         if (Toybox has :UserProfile) {
             try {
@@ -113,7 +96,6 @@ class SleepDetector {
         return min;
     }
 
-    //! Group raw samples into 5-minute buckets in a single pass.
     private function buildBuckets(hrSamples as Array<Dictionary>, stressSamples as Array<Dictionary>, bbSamples as Array<Dictionary>, startEpoch as Number, endEpoch as Number) as Array<Dictionary> {
         var first = startEpoch - (startEpoch % BUCKET_SECONDS);
         var numBuckets = ((endEpoch - first) / BUCKET_SECONDS) + 1;
@@ -172,7 +154,6 @@ class SleepDetector {
         return buckets;
     }
 
-    //! Single pass: assign each sample to its bucket and accumulate stats.
     private function accumulate(samples as Array<Dictionary>, first as Number, numBuckets as Number, count as Array<Number>, sum as Array<Number>, sq as Array<Number> or Null) as Void {
         for (var i = 0; i < samples.size(); i++) {
             var when = samples[i][:when] as Number;
@@ -188,18 +169,6 @@ class SleepDetector {
         }
     }
 
-    //! Night window covering a normal night and this user's schedule
-    //! (falls asleep early morning, wakes late morning).
-    private function isNightTime(epoch as Number) as Boolean {
-        var info = Gregorian.info(new Time.Moment(epoch), Time.FORMAT_SHORT);
-        var hour = info.hour;
-        return (hour >= 20 || hour <= 13);
-    }
-
-    //! Decide if a 5-minute bucket is asleep. Calibrated for recall from real
-    //! night data: stress at sleep onset can be 35-50, so the rules below rely
-    //! on body battery trend and night-time low+stable HR rather than on a low
-    //! stress threshold alone.
     private function classifyBucket(bucket as Dictionary) as Boolean {
         var hr = bucket[:hr];
         var hrStd = bucket[:hrStd];
@@ -210,12 +179,7 @@ class SleepDetector {
         var hrLow = (hr != null) && ((hr as Number) < _restingHr + 8);
         var stable = (hrStd != null) && ((hrStd as Number) < 6);
         var stressLow = (stress != null) && ((stress as Number) < 35);
-        var night = isNightTime(bStart);
 
-        // Body battery rising vs a reading from ~20 minutes ago, judged on
-        // every bucket (sliding window of the last ~40 minutes). This catches
-        // slow, sustained rises (like this user's 8 -> 59) reliably, including
-        // at sleep onset when stress is still high.
         var bbRise = false;
         if (bb != null) {
             var bbVal = bb as Number;
@@ -226,10 +190,10 @@ class SleepDetector {
                 }
             }
             _bbRing.add({ :start => bStart, :bb => bbVal });
-            // Trim entries older than ~40 minutes.
+            var minAllowedStart = bStart - 2 * BB_REF_MIN_AGE;
             var trimmed = new Array<Dictionary>[0];
             for (var i = 0; i < _bbRing.size(); i++) {
-                if ((_bbRing[i][:start] as Number) >= bStart - 2 * BB_REF_MIN_AGE) {
+                if ((_bbRing[i][:start] as Number) >= minAllowedStart) {
                     trimmed.add(_bbRing[i]);
                 }
             }
@@ -240,26 +204,29 @@ class SleepDetector {
         if (_bbSeen && bbRise && (hrLow || stressLow)) {
             return true;
         }
-        if (night && hrLow && stable) {
+        if (_stressSeen && hrLow && stable && stressLow) {
             return true;
         }
-        if (!_bbSeen && !_stressSeen && hrLow && stable) {
+
+        // FALLBACK para cuando no hay estres ni Body Battery
+        var hrVeryLow = (hr != null) && ((hr as Number) < _restingHr + 5);
+        var veryStable = (hrStd != null) && ((hrStd as Number) < 4);
+        if (!_bbSeen && !_stressSeen && hrVeryLow && veryStable) {
             return true;
         }
+
         return false;
     }
 
-    //! Feed one bucket through the hysteresis state machine.
     private function processBucket(bucket as Dictionary) as Void {
-        var asleep = classifyBucket(bucket);
         var bStart = bucket[:start] as Number;
+        var asleep = classifyBucket(bucket);
         if (asleep) {
             _asleepRun += 1;
             _awakeRun = 0;
             if (_state == STATE_ASLEEP) {
                 _sleepSeconds += BUCKET_SECONDS;
             } else if (_state == STATE_MAYBE_AWAKE) {
-                // Brief arousal resolved, back to confirmed sleep.
                 _state = STATE_ASLEEP;
                 _sleepSeconds += BUCKET_SECONDS;
             } else {
@@ -272,7 +239,9 @@ class SleepDetector {
                     _sleepSeconds += _pendingSeconds;
                     _pendingSeconds = 0;
                     if (_onsetEpoch == 0) {
-                        _onsetEpoch = bStart - (_asleepRun - 1) * BUCKET_SECONDS;
+                        _onsetEpoch = (_fixedOnsetEpoch > 0) 
+                            ? _fixedOnsetEpoch 
+                            : (bStart - (_asleepRun - 1) * BUCKET_SECONDS);
                     }
                 }
             }

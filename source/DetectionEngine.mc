@@ -27,9 +27,10 @@ class DetectionEngine {
         var heartRateSamples = HistoryReader.readHeartRate(readStartTimestamp, currentTimestamp);
         var stressSamples = HistoryReader.readStress(readStartTimestamp, currentTimestamp);
         var bodyBatterySamples = HistoryReader.readBodyBattery(readStartTimestamp, currentTimestamp);
+        var savedStartSleepTimestamp = SleepState.getOnsetEpoch();
 
         var sleepDetector = new SleepDetector();
-        sleepDetector.run(heartRateSamples, stressSamples, bodyBatterySamples, readStartTimestamp, currentTimestamp);
+        sleepDetector.run(heartRateSamples, stressSamples, bodyBatterySamples, readStartTimestamp, currentTimestamp, savedStartSleepTimestamp);
 
         var accumulatedSleepSeconds = sleepDetector.getSleepSeconds();
         var currentDetectionState = sleepDetector.getState();
@@ -41,7 +42,7 @@ class DetectionEngine {
         if (SleepState.getDetState() != currentDetectionState) {
             SleepState.setDetState(currentDetectionState);
         }
-        var savedStartSleepTimestamp = SleepState.getOnsetEpoch();
+        
         if (savedStartSleepTimestamp == 0 && detectedStartSleepTimestamp > 0) {
             SleepState.setOnsetEpoch(detectedStartSleepTimestamp);
         }
@@ -52,7 +53,7 @@ class DetectionEngine {
 
         if (currentTimestamp - SleepState.getLastLog() >= 300) {
             var currentBattery = System.getSystemStats().battery;
-            Logbook.appendEvent(currentTimestamp, accumulatedSleepSeconds, remainingSleepSeconds, currentDetectionState, detectedStartSleepTimestamp,
+            Logbook.appendEvent(currentTimestamp, accumulatedSleepSeconds, remainingSleepSeconds, currentDetectionState, SleepState.getOnsetEpoch(),
                 sleepDetector.getRestingHr(), currentBattery.toNumber(),
                 summarizeRange(heartRateSamples.size(), rangeOf(heartRateSamples)),
                 summarizeRange(stressSamples.size(), rangeOf(stressSamples)),
