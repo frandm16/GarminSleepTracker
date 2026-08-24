@@ -44,9 +44,7 @@ module Logbook {
         append(line3);
 
         var currentTime = Util.fmtDateTime(Time.now().value());
-        System.println(currentTime + " == " + line1);
-        System.println(currentTime + " == " + line2);
-        System.println(currentTime + " == " + line3);
+        System.println(currentTime + " == " + line1 + " " + line2 + " " + line3);
     }
 
     function appendSessionStart() as Void {
